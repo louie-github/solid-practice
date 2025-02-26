@@ -16,12 +16,49 @@ type GridGameMoveHistory = Sequence[GridGameMove]
 type MutableGridGameMoveHistory = MutableSequence[GridGameMove]
 
 
+class WinValidator(Protocol):
+    def get_winner(
+        self, field: Field, move_history: GridGameMoveHistory
+    ) -> PlayerId | None: ...
+
+
+class TicTacToeWinValidator:
+    def _get_groups(self, field: Field):
+        yield from (  # rows
+            [Cell(row, k) for k in field.valid_coords] for row in field.valid_coords
+        )
+        yield from (  # columns
+            [Cell(k, col) for k in field.valid_coords] for col in field.valid_coords
+        )
+        yield from (  # diagonals
+            # Backslash
+            [Cell(k, k) for k in field.valid_coords],
+            # Forward slash
+            [Cell(k, field.grid_size - k + 1) for k in field.valid_coords],
+        )
+
+    def get_winner(self, field: Field, move_history: GridGameMoveHistory):
+        for group in self._get_groups(field):
+            basis = field.get_symbol_at(group[0])
+            if basis is not None and field.are_all_equal_to_basis(basis, group):
+                for move in reversed(move_history):
+                    if move.cell in group and move.symbol == basis:
+                        return move.player
+                else:
+                    assert False, (
+                        f"Winning symbol {basis} in cell group {group} has no associated player"
+                    )
+        else:
+            return None
+
+
 class GridGameModel:
     def __init__(
         self,
         grid_size: int,
         player_symbols: Sequence[Symbol],
         player_count: int,
+        win_validator: WinValidator,
     ):
         if player_count <= 1:
             raise ValueError(f"Must have at least two players (found {player_count})")
@@ -38,6 +75,8 @@ class GridGameModel:
 
         self._field = Field(grid_size)
         self._move_history: MutableGridGameMoveHistory = []
+        self._win_validator: WinValidator = win_validator
+
         self._player_count = player_count
         self._player_to_symbol: dict[PlayerId, Symbol] = {
             k: symbol for k, symbol in enumerate(player_symbols, start=1)
@@ -75,36 +114,7 @@ class GridGameModel:
 
     @property
     def winner(self) -> PlayerId | None:
-        row_groups = [
-            [Cell(row, k) for k in self._field.valid_coords]
-            for row in self._field.valid_coords
-        ]
-
-        col_groups = [
-            [Cell(k, col) for k in self._field.valid_coords]
-            for col in self._field.valid_coords
-        ]
-
-        diagonals = [
-            # Backslash
-            [Cell(k, k) for k in self._field.valid_coords],
-            # Forward slash
-            [Cell(k, self._field.grid_size - k + 1) for k in self._field.valid_coords],
-        ]
-
-        for groups in [row_groups, col_groups, diagonals]:
-            for group in groups:
-                if (
-                    basis := self._field.get_symbol_at(group[0])
-                ) is not None and self._field.are_all_equal_to_basis(basis, group):
-                    winner = self._symbol_to_player.get(basis)
-                    assert winner is not None, (
-                        f"Winning symbol {basis} in cell group {groups} has no associated player"
-                    )
-
-                    return winner
-
-        return None
+        return self._win_validator.get_winner(self._field, self._move_history)
 
     def get_symbol_choices(self, player: PlayerId) -> list[Symbol]:
         if player not in self._player_to_symbol:
